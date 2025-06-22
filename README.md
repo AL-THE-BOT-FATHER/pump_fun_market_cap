@@ -1,6 +1,6 @@
 # PumpFunMarketCap
 
-A Python script for fetching on-chain bonding-curve data and calculating token price & market cap in both SOL and USD for “Pump Fun” tokens on Solana.
+A Python module for fetching on-chain bonding-curve data and calculating token price & market cap in both SOL and USD for “Pump Fun” tokens on Solana.
 
 ## Features
 
