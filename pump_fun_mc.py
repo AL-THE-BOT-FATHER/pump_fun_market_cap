@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Optional, Tuple
+from typing import Optional
 from solders.pubkey import Pubkey  # type: ignore
 from solana.rpc.api import Client
 import requests
@@ -17,12 +17,19 @@ class BondingCurveData:
     complete: bool
     creator: Pubkey
 
+@dataclass
+class MarketCapData:
+    token_price_sol: float
+    token_price_usd: float
+    market_cap_usd: float
+
 class PumpFunMarketCap:
     PGM_ID = Pubkey.from_string("6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P")
     DIA_URL = "https://api.diadata.org/v1/assetQuotation/Solana/0x0000000000000000000000000000000000000000"
 
-    def __init__(self, rpc_url: str) -> None:
+    def __init__(self, rpc_url: str, mint_str: str) -> None:
         self.client = Client(rpc_url)
+        self.mint = Pubkey.from_string(mint_str)
 
         self._curve_layout = Struct(
             Padding(8),
@@ -43,27 +50,28 @@ class PumpFunMarketCap:
         except Exception:
             return None
 
-    def _derive_bonding_curve_accounts(self, mint: Pubkey) -> Tuple[Optional[Pubkey], Optional[Pubkey]]:
+    def _derive_bonding_curve_accounts(self) -> tuple[Optional[Pubkey], Optional[Pubkey]]:
         try:
             bc, _ = Pubkey.find_program_address(
-                [b"bonding-curve", bytes(mint)],
+                [b"bonding-curve", bytes(self.mint)],
                 self.PGM_ID
             )
-            atoken = get_associated_token_address(bc, mint)
+            atoken = get_associated_token_address(bc, self.mint)
             return bc, atoken
         except Exception:
             return None, None
 
-    def _get_bonding_curve_data(self, mint_str: str) -> Optional[BondingCurveData]:
-        mint = Pubkey.from_string(mint_str)
-        bc, atoken = self._derive_bonding_curve_accounts(mint)
+    def _get_bonding_curve_data(self) -> Optional[BondingCurveData]:
+        bc, atoken = self._derive_bonding_curve_accounts()
         if not bc or not atoken:
             return None
+
         vr = self._get_virtual_reserves(bc)
         if vr is None:
             return None
+
         return BondingCurveData(
-            mint=mint,
+            mint=self.mint,
             bonding_curve=bc,
             associated_bonding_curve=atoken,
             virtual_token_reserves=int(vr.virtualTokenReserves),
@@ -78,12 +86,17 @@ class PumpFunMarketCap:
         resp.raise_for_status()
         return float(resp.json()["Price"])
 
-    def get_market_cap(self, mint_str: str, total_supply: int = 1_000_000_000, token_decimals: int = 6
-                 ) -> Tuple[float, float, float]:
-
-        bc_data = self._get_bonding_curve_data(mint_str)
+    def get_market_cap(
+        self,
+        total_supply: int = 1_000_000_000,
+        token_decimals: int = 6
+    ) -> MarketCapData:
+        """
+        Returns a MarketCapData object for the initialized mint.
+        """
+        bc_data = self._get_bonding_curve_data()
         if bc_data is None:
-            raise ValueError("Could not fetch bonding curve data for mint: " + mint_str)
+            raise ValueError(f"Could not fetch bonding curve data for mint: {self.mint}")
 
         sol_usd = self._get_sol_price_usd()
 
@@ -94,12 +107,18 @@ class PumpFunMarketCap:
         token_price_usd = token_price_sol * sol_usd
         market_cap_usd  = token_price_usd * total_supply
 
-        return token_price_sol, token_price_usd, market_cap_usd
+        return MarketCapData(
+            token_price_sol=token_price_sol,
+            token_price_usd=token_price_usd,
+            market_cap_usd=market_cap_usd,
+        )
 
 if __name__ == "__main__":
     rpc = "https://api.mainnet-beta.solana.com"
-    mint = ""
-    token_price_sol, token_price_usd, market_cap_usd = PumpFunMarketCap(rpc).get_market_cap(mint)
-    print(f"Pump Fun price (SOL): {token_price_sol:.9f} SOL")
-    print(f"Pump Fun price (USD): ${token_price_usd:.9f}")
-    print(f"Market cap (USD):     ${market_cap_usd:,.2f}")
+    mint = "" 
+    pump_fun_mc = PumpFunMarketCap(rpc, mint)
+    mc_data = pump_fun_mc.get_market_cap()
+
+    print(f"Token price (SOL): {mc_data.token_price_sol:.9f} SOL")
+    print(f"Token price (USD): ${mc_data.token_price_usd:.9f}")
+    print(f"Market cap (USD):     ${mc_data.market_cap_usd:,.2f}")
